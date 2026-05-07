@@ -91,6 +91,7 @@ class SystemConfigService:
     # 该分类只用于诊断展示，不作为配置迁移或清理触发条件。
     _LLM_PROVIDER_BLOCKED_TOKENS: Tuple[str, ...] = (
         "your request was blocked",
+        "request was blocked",
         "request was blocked by safety",
         "request was blocked by policy",
         "request has been blocked by provider safety",
@@ -2683,6 +2684,8 @@ class SystemConfigService:
         in runtime checks and do not mutate or migrate persisted user config.
         """
         lowered = text.lower()
+        if "request was blocked" in lowered and "local firewall" in lowered:
+            return False
         return any(token in lowered for token in SystemConfigService._LLM_PROVIDER_BLOCKED_TOKENS)
 
     @staticmethod
