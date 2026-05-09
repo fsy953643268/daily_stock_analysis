@@ -689,6 +689,42 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             notify=True,
         )
 
+    def test_trigger_analysis_accepts_bse_suffix_code_from_autocomplete(self) -> None:
+        if trigger_analysis is None:
+            self.skipTest("fastapi is not installed in this test environment")
+
+        queue = MagicMock()
+        queue.submit_tasks_batch.return_value = ([], [])
+
+        with patch("api.v1.endpoints.analysis.get_task_queue", return_value=queue), \
+             patch("api.v1.endpoints.analysis.resolve_name_to_code") as resolve_mock:
+            response = trigger_analysis(
+                request=SimpleNamespace(
+                    stock_code="920493.BJ",
+                    stock_codes=None,
+                    stock_name="示例北交所股票",
+                    original_query="920493",
+                    selection_source="autocomplete",
+                    report_type="detailed",
+                    force_refresh=False,
+                    async_mode=True,
+                    notify=True,
+                ),
+                config=SimpleNamespace(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        resolve_mock.assert_not_called()
+        queue.submit_tasks_batch.assert_called_once_with(
+            stock_codes=["920493.BJ"],
+            stock_name="示例北交所股票",
+            original_query="920493",
+            selection_source="autocomplete",
+            report_type="detailed",
+            force_refresh=False,
+            notify=True,
+        )
+
     def test_trigger_analysis_accepts_hk_prefixed_code(self) -> None:
         if trigger_analysis is None:
             self.skipTest("fastapi is not installed in this test environment")
