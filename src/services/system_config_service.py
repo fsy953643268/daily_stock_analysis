@@ -264,8 +264,8 @@ class SystemConfigService:
         return display_map
 
     @staticmethod
-    def _resolve_display_value(raw_value: str, field_schema: Dict[str, Any]) -> str:
-        if raw_value:
+    def _resolve_display_value(raw_value: str, field_schema: Dict[str, Any], raw_value_exists: bool) -> str:
+        if raw_value_exists:
             return raw_value
 
         if field_schema.get("ui_control") == "switch":
@@ -293,13 +293,14 @@ class SystemConfigService:
 
         items: List[Dict[str, Any]] = []
         for key in all_keys:
+            raw_value_exists = key in config_map
             raw_value = config_map.get(key, "")
             field_schema = schema_by_key[key]
-            display_value = self._resolve_display_value(raw_value, field_schema)
+            display_value = self._resolve_display_value(raw_value, field_schema, raw_value_exists)
             item: Dict[str, Any] = {
                 "key": key,
                 "value": display_value,
-                "raw_value_exists": bool(raw_value),
+                "raw_value_exists": raw_value_exists,
                 "is_masked": False,
             }
             if include_schema:
