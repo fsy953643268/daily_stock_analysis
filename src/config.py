@@ -822,6 +822,7 @@ def setup_env(override: bool = False):
     else:
         env_path = Path(__file__).parent.parent / '.env'
     load_dotenv(dotenv_path=env_path, override=override)
+    Config._remember_dotenv_loaded_runtime_env_values(env_path)
 
 
 @dataclass
@@ -1217,6 +1218,7 @@ class Config:
     _BOOTSTRAP_RUNTIME_ENV_OVERRIDES = frozenset()
     _BOOTSTRAP_RUNTIME_ENV_OVERRIDE_VALUES = {}
     _BOOTSTRAP_RUNTIME_ENV_PRESENT_KEYS = frozenset()
+    _DOTENV_LOADED_RUNTIME_ENV_VALUES = {}
 
     def __post_init__(self) -> None:
         _log = logging.getLogger(__name__)
@@ -2256,8 +2258,7 @@ class Config:
     @classmethod
     def _get_env_file_value(cls, key: str) -> Optional[str]:
         """Read one config key directly from the active `.env` file."""
-        env_file = os.getenv("ENV_FILE")
-        env_path = Path(env_file) if env_file else (Path(__file__).parent.parent / ".env")
+        env_path = cls._get_active_env_path()
         if not env_path.exists():
             return None
 
@@ -2276,6 +2277,49 @@ class Config:
         if value is None:
             return None
         return str(value)
+
+    @classmethod
+    def _get_active_env_path(cls) -> Path:
+        env_file = os.getenv("ENV_FILE")
+        return Path(env_file) if env_file else (Path(__file__).parent.parent / ".env")
+
+    @classmethod
+    def _remember_dotenv_loaded_runtime_env_values(cls, env_path: Path) -> None:
+        """Track runtime keys whose current ``os.environ`` value came from dotenv."""
+        if not env_path.exists():
+            return
+
+        try:
+            env_values = dotenv_values(env_path)
+        except Exception as exc:  # pragma: no cover - defensive branch
+            logging.getLogger(__name__).warning(
+                "Failed to read %s after dotenv load: %s",
+                env_path,
+                exc,
+            )
+            return
+
+        env_path_key = str(env_path)
+        tracked_values = dict(cls._DOTENV_LOADED_RUNTIME_ENV_VALUES)
+        for key in cls._WEBUI_RUNTIME_ENV_FILE_PRIORITY_KEYS:
+            raw_file_value = env_values.get(key)
+            if raw_file_value is None:
+                continue
+
+            file_value = str(raw_file_value)
+            if os.environ.get(key) == file_value:
+                tracked_values[key] = (env_path_key, file_value)
+
+        cls._DOTENV_LOADED_RUNTIME_ENV_VALUES = tracked_values
+
+    @classmethod
+    def _is_dotenv_loaded_runtime_env_value(cls, key: str, env_value: str) -> bool:
+        loaded_value = cls._DOTENV_LOADED_RUNTIME_ENV_VALUES.get(key)
+        if loaded_value is None:
+            return False
+
+        env_path_key, loaded_env_value = loaded_value
+        return env_path_key == str(cls._get_active_env_path()) and loaded_env_value == env_value
 
     @classmethod
     def _resolve_env_value(
@@ -2358,6 +2402,8 @@ class Config:
         for key in cls._WEBUI_RUNTIME_ENV_FILE_PRIORITY_KEYS:
             env_value = os.environ.get(key)
             if env_value is None:
+                continue
+            if cls._is_dotenv_loaded_runtime_env_value(key, env_value):
                 continue
 
             present_keys.add(key)

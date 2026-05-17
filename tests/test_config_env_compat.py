@@ -490,6 +490,59 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         self.assertEqual(config.stock_list, ["300750"])
         self.assertGreaterEqual(mock_urlopen.call_count, 2)
 
+    @patch("src.config._open_stock_list_fetch_request")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_dotenv_loaded_fetch_api_reloads_from_updated_env_file(
+        self,
+        _mock_parse_yaml,
+        mock_urlopen,
+    ) -> None:
+        initial_fetch_api = "https://initial.example.com/stocks.json"
+        updated_fetch_api = "https://updated.example.com/stocks.json"
+        seen_urls = []
+
+        def fake_urlopen(request, timeout_seconds):
+            seen_urls.append(request.full_url)
+            if request.full_url == updated_fetch_api:
+                return _FakeUrlopenResponse('["300750"]')
+            return _FakeUrlopenResponse('["600519"]')
+
+        mock_urlopen.side_effect = fake_urlopen
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "STOCK_LIST=600519",
+                        f"STOCK_LIST_FETCH_API={initial_fetch_api}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch.dict(os.environ, {"ENV_FILE": str(env_path)}, clear=True):
+                Config._load_from_env()
+                env_path.write_text(
+                    "\n".join(
+                        [
+                            "STOCK_LIST=600519",
+                            f"STOCK_LIST_FETCH_API={updated_fetch_api}",
+                        ]
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                Config.reset_instance()
+                setup_env(override=True)
+                config = Config._load_from_env()
+
+        self.assertEqual(config.stock_list_fetch_api, updated_fetch_api)
+        self.assertEqual(config.stock_list, ["300750"])
+        self.assertIn(initial_fetch_api, seen_urls)
+        self.assertEqual(seen_urls[-1], updated_fetch_api)
+
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     def test_runtime_mutable_keys_use_process_env_when_absent_from_file(
         self,
