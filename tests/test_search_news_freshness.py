@@ -499,6 +499,52 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
         self.assertEqual(resp.results[0].relevance_category, "direct_company_news")
         self.assertEqual(resp.results[1].relevance_category, "sector_related_news")
 
+    def test_suffixed_stock_codes_keep_canonical_identity_terms(self) -> None:
+        """Suffixed market codes should still emit canonical direct-match variants."""
+        cases = (
+            ("00700.HK", {"00700", "HK00700"}),
+            ("600519.SH", {"600519", "600519.SH"}),
+            ("AAPL.US", {"AAPL", "NASDAQ:AAPL", "NYSE:AAPL"}),
+        )
+        for stock_code, expected_terms in cases:
+            with self.subTest(stock_code=stock_code):
+                terms = set(SearchService._stock_code_identity_terms(stock_code))
+                self.assertTrue(expected_terms.issubset(terms))
+
+    def test_suffixed_market_codes_score_canonical_code_hits_as_direct(self) -> None:
+        """Canonical code hits from suffixed inputs should be direct company news."""
+        fresh = datetime.now().date().isoformat()
+        cases = (
+            ("00700.HK", "HK00700 announces buyback"),
+            ("600519.SH", "600519 发布回购公告"),
+            ("AAPL.US", "AAPL announces quarterly results"),
+        )
+        for stock_code, title in cases:
+            with self.subTest(stock_code=stock_code):
+                scored = SearchService._score_news_relevance(
+                    _result(
+                        title,
+                        fresh,
+                        snippet="The company reported a share buyback and quarterly results.",
+                    ),
+                    stock_code=stock_code,
+                    stock_name="Unmatched Name",
+                )
+                self.assertEqual(scored.relevance_category, "direct_company_news")
+                self.assertIn("股票代码", "；".join(scored.relevance_reasons or []))
+
+    def test_us_ticker_matches_before_known_dotted_market_suffix(self) -> None:
+        """Ticker boundaries should allow explicit market suffixes from news feeds."""
+        self.assertTrue(
+            SearchService._contains_stock_code_identity_term("AAPL.US shares rally", "AAPL")
+        )
+        self.assertTrue(
+            SearchService._contains_stock_code_identity_term("TSLA.O gains after results", "TSLA")
+        )
+        self.assertFalse(
+            SearchService._contains_stock_code_identity_term("AAPL.COM launches update", "AAPL")
+        )
+
     def test_one_letter_us_ticker_does_not_match_common_article_words(self) -> None:
         """Bare one-letter US tickers should not make ordinary words direct hits."""
         fresh = datetime.now().date().isoformat()

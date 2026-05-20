@@ -2505,17 +2505,29 @@ class SearchService:
 
         terms: List[str] = []
         upper = raw.upper()
-        is_us_ticker = bool(cls._US_STOCK_RE.match(upper))
+        code_for_variants = upper
+        if "." in upper:
+            base, suffix = upper.rsplit(".", 1)
+            if suffix == "HK" and base.isdigit() and 1 <= len(base) <= 5:
+                code_for_variants = f"HK{base.zfill(5)}"
+            elif suffix in {"SH", "SZ", "SS", "BJ"} and base.isdigit() and len(base) == 6:
+                code_for_variants = base
+            elif suffix == "US" and re.fullmatch(r"[A-Z]{1,5}", base):
+                code_for_variants = base
+
+        is_us_ticker = bool(cls._US_STOCK_RE.match(code_for_variants))
         if not is_us_ticker:
             cls._append_unique(terms, raw)
             cls._append_unique(terms, upper)
+            if code_for_variants != upper:
+                cls._append_unique(terms, code_for_variants)
 
-        lower = raw.lower()
+        lower = code_for_variants.lower()
         hk_digits = ""
         if lower.startswith("hk"):
-            hk_digits = re.sub(r"\D", "", raw)
-        elif raw.isdigit() and len(raw) == 5:
-            hk_digits = raw
+            hk_digits = re.sub(r"\D", "", code_for_variants)
+        elif code_for_variants.isdigit() and len(code_for_variants) == 5:
+            hk_digits = code_for_variants
 
         if hk_digits:
             padded = hk_digits.zfill(5)
@@ -2528,17 +2540,17 @@ class SearchService:
             cls._append_unique(terms, f"HKEX:{short}")
             return terms
 
-        if raw.isdigit() and len(raw) == 6:
-            suffix = ".SH" if raw.startswith(("5", "6", "9")) else ".SZ"
-            cls._append_unique(terms, f"{raw}{suffix}")
+        if code_for_variants.isdigit() and len(code_for_variants) == 6:
+            suffix = ".SH" if code_for_variants.startswith(("5", "6", "9")) else ".SZ"
+            cls._append_unique(terms, f"{code_for_variants}{suffix}")
             return terms
 
-        if cls._US_STOCK_RE.match(upper):
-            cls._append_unique(terms, f"${upper}")
-            cls._append_unique(terms, f"NASDAQ:{upper}")
-            cls._append_unique(terms, f"NYSE:{upper}")
-            if len(upper) > 1:
-                cls._append_unique(terms, upper)
+        if cls._US_STOCK_RE.match(code_for_variants):
+            cls._append_unique(terms, f"${code_for_variants}")
+            cls._append_unique(terms, f"NASDAQ:{code_for_variants}")
+            cls._append_unique(terms, f"NYSE:{code_for_variants}")
+            if len(code_for_variants) > 1:
+                cls._append_unique(terms, code_for_variants)
             return terms
 
         return terms
@@ -2606,7 +2618,11 @@ class SearchService:
             return False
 
         if cls._US_STOCK_RE.match(term) and term.upper() == term and not term.startswith("$"):
-            pattern = r"(?<![A-Za-z0-9$:.])" + re.escape(term) + r"(?![A-Za-z0-9.])"
+            pattern = (
+                r"(?<![A-Za-z0-9$:.])"
+                + re.escape(term)
+                + r"(?=$|[^A-Za-z0-9.]|\.(?:US|O|N|NYSE|NASDAQ|AMEX)\b)"
+            )
             return bool(re.search(pattern, text))
 
         return cls._contains_identity_term(text, term)
