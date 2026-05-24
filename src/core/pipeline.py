@@ -1033,8 +1033,11 @@ class StockAnalysisPipeline:
             if result and result.success:
                 try:
                     history_context = self._build_context_snapshot(
-                        enhanced_context=initial_context,
-                        news_content=None,
+                        enhanced_context={
+                            **self._without_market_phase_context(initial_context),
+                            "stock_name": resolved_stock_name,
+                        },
+                        news_content=initial_context.get("news_context"),
                         realtime_quote=realtime_quote,
                         chip_data=chip_data,
                     )
@@ -1045,7 +1048,7 @@ class StockAnalysisPipeline:
                         report_type=report_type.value,
                         news_content=None,
                         context_snapshot=history_context,
-                        save_snapshot=self.save_context_snapshot
+                        save_snapshot=self.save_context_snapshot,
                     )
                     record_history_run(
                         report_saved=bool(saved_count),
