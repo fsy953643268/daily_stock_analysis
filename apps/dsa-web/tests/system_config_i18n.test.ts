@@ -77,17 +77,51 @@ describe('systemConfigI18n required key coverage', () => {
 });
 
 describe('systemConfigI18n option label localization', () => {
-  it('localizes representative option labels in settings select fields', () => {
-    expect(getFieldOptionLabelZh('REPORT_LANGUAGE', 'zh')).toBe('中文');
-    expect(getFieldOptionLabelZh('REPORT_LANGUAGE', 'en')).toBe('英文');
+  const realSelectOptionCases = [
+    ['NEWS_STRATEGY_PROFILE', 'ultra_short', undefined, '超短线（1天）'],
+    ['NEWS_STRATEGY_PROFILE', 'short', undefined, '短期（3天）'],
+    ['NEWS_STRATEGY_PROFILE', 'medium', undefined, '中期（7天）'],
+    ['NEWS_STRATEGY_PROFILE', 'long', undefined, '长期（30天）'],
+    ['REPORT_TYPE', 'simple', undefined, '简洁'],
+    ['REPORT_TYPE', 'full', undefined, '完整'],
+    ['REPORT_TYPE', 'brief', undefined, '简报'],
+    ['REPORT_LANGUAGE', 'zh', 'Chinese', '中文'],
+    ['REPORT_LANGUAGE', 'en', 'English', '英文'],
+    ['NOTIFICATION_MIN_SEVERITY', '', 'Not set', '未设置'],
+    ['NOTIFICATION_MIN_SEVERITY', 'info', 'info', '信息'],
+    ['NOTIFICATION_MIN_SEVERITY', 'warning', 'warning', '警告'],
+    ['NOTIFICATION_MIN_SEVERITY', 'error', 'error', '错误'],
+    ['NOTIFICATION_MIN_SEVERITY', 'critical', 'critical', '严重'],
+    ['LOG_LEVEL', 'DEBUG', undefined, '调试'],
+    ['LOG_LEVEL', 'INFO', undefined, '信息'],
+    ['LOG_LEVEL', 'WARNING', undefined, '警告'],
+    ['LOG_LEVEL', 'ERROR', undefined, '错误'],
+    ['LOG_LEVEL', 'CRITICAL', undefined, '严重'],
+    ['MARKET_REVIEW_REGION', 'cn', undefined, 'A 股'],
+    ['MARKET_REVIEW_REGION', 'hk', undefined, '港股'],
+    ['MARKET_REVIEW_REGION', 'us', undefined, '美股'],
+    ['MARKET_REVIEW_REGION', 'both', undefined, '全部市场'],
+    ['MARKET_REVIEW_COLOR_SCHEME', 'green_up', 'Green Up / Red Down', '绿涨红跌'],
+    ['MARKET_REVIEW_COLOR_SCHEME', 'red_up', 'Red Up / Green Down', '红涨绿跌'],
+    ['AGENT_ARCH', 'single', 'Single Agent', '单 Agent'],
+    ['AGENT_ARCH', 'multi', 'Multi Agent (Orchestrator)', '多 Agent（编排）'],
+    ['AGENT_ORCHESTRATOR_MODE', 'quick', 'Quick', '快速'],
+    ['AGENT_ORCHESTRATOR_MODE', 'standard', 'Standard', '标准'],
+    ['AGENT_ORCHESTRATOR_MODE', 'full', 'Full', '完整'],
+    ['AGENT_ORCHESTRATOR_MODE', 'specialist', 'Specialist', '专家'],
+    ['AGENT_SKILL_ROUTING', 'auto', 'Auto (Regime-based)', '自动（按市场状态）'],
+    ['AGENT_SKILL_ROUTING', 'manual', 'Manual (Use AGENT_SKILLS)', '手动（使用 AGENT_SKILLS）'],
+  ] as const;
 
-    expect(getFieldOptionLabelZh('NOTIFICATION_MIN_SEVERITY', '', 'Not set')).toBe('未设置');
-    expect(getFieldOptionLabelZh('NOTIFICATION_MIN_SEVERITY', 'critical')).toBe('严重');
+  it('localizes all select options currently exposed by system config schema', () => {
+    realSelectOptionCases.forEach(([key, value, fallbackLabel, expectedLabel]) => {
+      const label = getFieldOptionLabelZh(key, value, fallbackLabel);
 
-    expect(getFieldOptionLabelZh('MARKET_REVIEW_COLOR_SCHEME', 'green_up')).toBe('绿涨红跌');
-    expect(getFieldOptionLabelZh('AGENT_ARCH', 'multi')).toBe('多 Agent（编排）');
-    expect(getFieldOptionLabelZh('AGENT_ORCHESTRATOR_MODE', 'quick')).toBe('快速');
-    expect(getFieldOptionLabelZh('AGENT_SKILL_ROUTING', 'manual')).toBe('手动（使用 AGENT_SKILLS）');
-    expect(getFieldOptionLabelZh('NOTIFICATION_REPORT_CHANNELS', 'wechat')).toBe('企业微信');
+      expect(label).toBe(expectedLabel);
+      expect(label).not.toBe(value);
+      if (fallbackLabel) {
+        expect(label).not.toBe(fallbackLabel);
+      }
+    });
   });
 });
