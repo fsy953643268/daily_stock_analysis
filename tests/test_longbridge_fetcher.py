@@ -157,6 +157,39 @@ class TestLongbridgeAuthSelection(unittest.TestCase):
         mock_quote_context.assert_called_once_with("oauth-config")
 
     @patch("src.config.get_config")
+    def test_oauth_uses_app_key_as_client_id_when_access_token_missing(self, mock_get_config):
+        mock_get_config.return_value = self._config(app_key="app-key", app_secret="app-secret")
+        modules = self._install_mock_longbridge()
+        mock_lb_module, mock_lb_openapi, mock_config, mock_quote_context, mock_oauth_builder = modules
+        mock_oauth_builder.return_value.build.return_value = "oauth-token"
+        mock_config.from_oauth.return_value = "oauth-config"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            token_cache = Path(tmpdir) / "app-key"
+            token_cache.write_text('{"refresh_token":"valid-token"}', encoding="utf-8")
+            with patch.dict("sys.modules", {"longbridge": mock_lb_module, "longbridge.openapi": mock_lb_openapi}), patch.dict(
+                os.environ,
+                {
+                    "LONGBRIDGE_OAUTH_CLIENT_ID": "",
+                    "LONGBRIDGE_APP_KEY": "app-key",
+                    "LONGBRIDGE_APP_SECRET": "app-secret",
+                    "LONGBRIDGE_ACCESS_TOKEN": "",
+                },
+            ), patch("data_provider.longbridge_fetcher._longbridge_config_kwargs", return_value={}), patch(
+                "data_provider.longbridge_fetcher._oauth_token_cache_path",
+                return_value=token_cache,
+            ):
+                fetcher = LongbridgeFetcher()
+                ctx = fetcher._get_ctx()
+
+        self.assertEqual(ctx, "quote-context")
+        mock_oauth_builder.assert_called_once_with("app-key")
+        mock_config.from_oauth.assert_called_once_with("oauth-token")
+        mock_config.from_apikey_env.assert_not_called()
+        mock_config.from_apikey.assert_not_called()
+        mock_quote_context.assert_called_once_with("oauth-config")
+
+    @patch("src.config.get_config")
     def test_oauth_without_cache_does_not_call_legacy_when_legacy_incomplete(self, mock_get_config):
         mock_get_config.return_value = self._config(oauth_client_id="client-1")
         modules = self._install_mock_longbridge()
