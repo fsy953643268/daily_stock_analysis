@@ -324,8 +324,9 @@ const SettingsPage: React.FC = () => {
   const hasConfiguredChannels = Boolean((rawActiveItemMap.get('LLM_CHANNELS') || '').trim());
   const hasLitellmConfig = Boolean((rawActiveItemMap.get('LITELLM_CONFIG') || '').trim());
 
-  // Hide channel-managed and legacy provider-specific LLM keys from the
-  // generic form only when channel config is the active runtime source.
+  // UI rendering rule only: hide channel-managed and legacy provider-specific
+  // LLM keys from generic fields when channel mode is active. This does not
+  // alter save/refresh payloads or config migration/rollback behavior.
   const LLM_CHANNEL_KEY_RE = /^LLM_[A-Z0-9_]+_(PROTOCOL|BASE_URL|API_KEY|API_KEYS|MODELS|EXTRA_HEADERS|ENABLED)$/;
   const AI_MODEL_HIDDEN_KEYS = new Set([
     'LLM_CHANNELS',

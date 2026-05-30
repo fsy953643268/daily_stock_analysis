@@ -40,6 +40,10 @@ alphasift.screen(strategy, market=market, max_output=max_results, use_llm=False)
 
 ## 契约与兼容验证
 
+Settings 页面里仅对 AI 配置项做“字段分组与可视化归并”控制：在通道模式已开启时把部分 `LLM_*` 字段交由 LLM 渠道编辑器展示，
+其余字段仍按原分类渲染；**不触发任何配置迁移、清洗重写或回退路径**。
+保存与重载仍通过既有系统配置保存接口完成，兼容现网既有的 `LITELLM_MODEL`/`LLM_CHANNELS` 回退与迁移语义。
+
 后端 `/api/v1/alphasift/status` 与 `/api/v1/alphasift/install` 只返回非敏感字段，不会回传原始 `ALPHASIFT_INSTALL_SPEC`，并在响应中给出 `install_spec_is_default` 是否为默认可信来源。
 在自动化测试中通过 `tests/test_alphasift_api.py` 固化以下约束（以便将该 commit 与 DSA 调用契约解耦验证）：
 
