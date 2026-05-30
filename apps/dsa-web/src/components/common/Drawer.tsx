@@ -13,7 +13,6 @@ interface DrawerProps {
   zIndex?: number;
   side?: 'left' | 'right';
   backdropClassName?: string;
-  titleEyebrow?: string;
 }
 
 /**
@@ -28,7 +27,6 @@ export const Drawer: React.FC<DrawerProps> = ({
   zIndex = 50,
   side = 'right',
   backdropClassName,
-  titleEyebrow = 'DETAIL VIEW',
 }) => {
   // Close the drawer when Escape is pressed.
   const handleKeyDown = useCallback(
@@ -90,7 +88,7 @@ export const Drawer: React.FC<DrawerProps> = ({
           <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
             {title ? (
               <div>
-                {titleEyebrow ? <span className="label-uppercase">{titleEyebrow}</span> : null}
+                <span className="label-uppercase">DETAIL VIEW</span>
                 <h2 id={titleId} className="mt-1 text-lg font-semibold text-foreground">{title}</h2>
               </div>
             ) : <div />}

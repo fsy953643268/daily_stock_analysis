@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import type { AnalysisReport, HistoryItem, StockHistoryFilters, StockHistoryRange } from '../../types/analysis';
 import { getSentimentColor } from '../../types/analysis';
 import { formatDateTime, formatReportType } from '../../utils/format';
-import { Badge, Button, Drawer } from '../common';
+import { Badge, Button, Card } from '../common';
 import { DashboardStateBlock } from '../dashboard';
 
 interface StockHistoryTrendDrawerProps {
@@ -23,9 +23,9 @@ interface StockHistoryTrendDrawerProps {
 }
 
 const RANGE_OPTIONS: Array<{ value: StockHistoryRange; label: string }> = [
+  { value: 'all', label: '全部历史' },
   { value: '30d', label: '近30天' },
   { value: '90d', label: '近90天' },
-  { value: 'all', label: '全部' },
 ];
 
 const isPresent = <T,>(value: T | null | undefined): value is T =>
@@ -58,15 +58,11 @@ const formatAdvice = (item: Pick<HistoryItem, 'operationAdvice' | 'trendPredicti
   return advice || trend || '--';
 };
 
-const summarizeView = (items: HistoryItem[], currentId?: number) => {
+const summarizeView = (items: HistoryItem[], report: AnalysisReport, currentId?: number) => {
   const scores = items
     .map((item) => item.sentimentScore)
     .filter((score): score is number => typeof score === 'number' && Number.isFinite(score));
   const current = items.find((item) => item.id === currentId) || items[0];
-  const averageScore = scores.length
-    ? scores.reduce((sum, score) => sum + score, 0) / scores.length
-    : undefined;
-  const scoreTrail = scores.slice(0, 8).reverse();
   const models = new Map<string, number>();
   items.forEach((item) => {
     const model = item.modelUsed?.trim() || '未记录';
@@ -75,24 +71,38 @@ const summarizeView = (items: HistoryItem[], currentId?: number) => {
 
   return {
     current,
-    averageScore,
-    scoreTrail,
+    currentScore: current?.sentimentScore ?? report.summary.sentimentScore,
+    currentAdvice: current
+      ? formatAdvice(current)
+      : formatAdvice({
+          operationAdvice: report.summary.operationAdvice,
+          trendPrediction: report.summary.trendPrediction,
+        }),
+    latestTime: formatDateTime(items[0]?.createdAt || report.meta.createdAt),
     modelSummary: Array.from(models.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
-      .map(([model, count]) => `${model} ${count}次`)
-      .join(' / '),
+      .map(([model]) => model)
+      .join(' / ') || '未记录',
+    chartScores: scores.slice(0, 8).reverse(),
   };
 };
 
-const MetricItem: React.FC<{ label: string; value: React.ReactNode; title?: string }> = ({ label, value, title }) => (
-  <div className="min-w-0 rounded-lg border border-border/60 bg-background/50 px-3 py-2">
-    <p className="text-xs text-muted-text">{label}</p>
-    <p className="mt-1 truncate text-sm font-semibold text-foreground" title={title}>
-      {value}
-    </p>
-  </div>
-);
+const buildChartPoints = (scores: number[]) => {
+  if (scores.length === 0) {
+    return '';
+  }
+  const minScore = Math.min(...scores, 20);
+  const maxScore = Math.max(...scores, 80);
+  const span = Math.max(maxScore - minScore, 1);
+  return scores
+    .map((score, index) => {
+      const x = scores.length === 1 ? 50 : (index / (scores.length - 1)) * 100;
+      const y = 92 - ((score - minScore) / span) * 72;
+      return `${x},${y}`;
+    })
+    .join(' ');
+};
 
 export const StockHistoryTrendDrawer: React.FC<StockHistoryTrendDrawerProps> = ({
   report,
@@ -110,107 +120,32 @@ export const StockHistoryTrendDrawer: React.FC<StockHistoryTrendDrawerProps> = (
   onRetry,
 }) => {
   const currentRecordId = report.meta.id;
-  const stockLabel = `${report.meta.stockName || report.meta.stockCode} ${report.meta.stockCode}`;
-  const summary = useMemo(() => summarizeView(items, currentRecordId), [currentRecordId, items]);
-  const currentItem = summary.current;
-  const currentScore = currentItem?.sentimentScore ?? report.summary.sentimentScore;
-  const currentModel = report.meta.modelUsed || currentItem?.modelUsed || '--';
-  const currentAdvice = currentItem
-    ? formatAdvice(currentItem)
-    : formatAdvice({
-        operationAdvice: report.summary.operationAdvice,
-        trendPrediction: report.summary.trendPrediction,
-      });
+  const summary = useMemo(
+    () => summarizeView(items, report, currentRecordId),
+    [currentRecordId, items, report],
+  );
+  const chartPoints = buildChartPoints(summary.chartScores);
 
   return (
-    <Drawer
-      isOpen
-      onClose={onClose}
-      title="同股历史趋势"
-      titleEyebrow="历史分析"
-      width="max-w-2xl"
-      zIndex={90}
-      backdropClassName="bg-background/48 backdrop-blur-[2px]"
-    >
-      <div className="space-y-4">
-        <section className="rounded-xl border border-border/70 bg-background/35 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className="truncate text-lg font-semibold text-foreground">{stockLabel}</h3>
-              <p className="mt-1 text-sm text-secondary-text">
-                共 {total || items.length} 次分析 · 最近 {formatDateTime(items[0]?.createdAt || report.meta.createdAt)}
-              </p>
-            </div>
-            <Badge variant="info" size="sm" className="shrink-0 shadow-none">
-              当前 {currentAdvice}
-            </Badge>
-          </div>
+    <Card variant="bordered" padding="sm" className="home-panel-card home-rail-card p-0">
+      <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+        <h3 className="text-base font-semibold text-foreground">同股历史趋势</h3>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-secondary-text transition-colors hover:text-foreground"
+          aria-label="关闭同股历史趋势"
+        >
+          ×
+        </button>
+      </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <MetricItem label="当前分数" value={formatNumber(currentScore, 0)} />
-            <MetricItem label="平均分" value={formatNumber(summary.averageScore, 1)} />
-            <MetricItem label="当前价格" value={formatNumber(currentItem?.currentPrice, 2)} />
-            <MetricItem label="当前模型" value={currentModel} title={currentModel} />
-          </div>
-
-          {summary.scoreTrail.length >= 2 ? (
-            <div className="mt-4 rounded-lg border border-border/60 bg-card/50 px-3 py-2.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-secondary-text">评分变化</span>
-                {summary.scoreTrail.map((score, index) => (
-                  <span key={`${score}-${index}`} className="flex items-center gap-2">
-                    {index > 0 && <span className="text-muted-text">→</span>}
-                    <span
-                      className="rounded-full border px-2 py-0.5 font-mono text-xs font-semibold"
-                      style={{
-                        color: getSentimentColor(score),
-                        borderColor: `${getSentimentColor(score)}40`,
-                        backgroundColor: `${getSentimentColor(score)}12`,
-                      }}
-                    >
-                      {score}
-                    </span>
-                  </span>
-                ))}
-              </div>
-              {summary.modelSummary ? (
-                <p className="mt-2 truncate text-xs text-secondary-text" title={summary.modelSummary}>
-                  模型记录：{summary.modelSummary}
-                </p>
-              ) : null}
-            </div>
-          ) : (
-            <p className="mt-4 rounded-lg border border-dashed border-border/70 bg-card/45 px-3 py-2 text-sm text-secondary-text">
-              当前历史记录不足，暂无法形成连续趋势。
-            </p>
-          )}
-        </section>
-
-        <section className="rounded-xl border border-border/70 bg-background/35 p-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              {RANGE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => onRangeChange(option.value)}
-                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-                    filters.range === option.value
-                      ? 'border-primary/50 bg-primary/10 text-primary'
-                      : 'border-border/70 bg-card/55 text-secondary-text hover:bg-hover hover:text-foreground'
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-secondary-text">按分析时间倒序</p>
-          </div>
-        </section>
-
-        {isLoading ? (
+      {isLoading ? (
+        <div className="p-4">
           <DashboardStateBlock loading compact title="加载同股历史中..." />
-        ) : error ? (
+        </div>
+      ) : error ? (
+        <div className="p-4">
           <DashboardStateBlock
             compact
             title="历史趋势加载失败"
@@ -221,112 +156,183 @@ export const StockHistoryTrendDrawer: React.FC<StockHistoryTrendDrawerProps> = (
               </Button>
             )}
           />
-        ) : items.length === 0 ? (
+        </div>
+      ) : items.length === 0 ? (
+        <div className="p-4">
           <DashboardStateBlock
             compact
             title="暂无更多同股历史分析"
             description="完成多次分析后，这里会展示观点变化、评分走势和模型记录。"
           />
-        ) : (
-          <section className="rounded-xl border border-border/70 bg-background/35">
-            <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
-              <h4 className="text-sm font-semibold text-foreground">历史记录</h4>
-              <span className="text-xs text-secondary-text">
-                已加载 {items.length} / {total || items.length} 条
-              </span>
+        </div>
+      ) : (
+        <div className="space-y-3 p-3">
+          <div className="grid grid-cols-3 divide-x divide-border/60 rounded-xl border border-border/60 bg-background/40 px-2 py-2 text-center">
+            <div>
+              <p className="text-xs text-muted-text">共 {total || items.length} 次分析</p>
+              <p className="mt-1 text-xs text-secondary-text">最近一次 {summary.latestTime}</p>
             </div>
+            <div>
+              <p className="text-xs text-muted-text">当前观点</p>
+              <p className="mt-1 text-sm font-semibold text-success">{summary.currentAdvice}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-text">模型分布</p>
+              <p className="mt-1 truncate text-xs font-semibold text-indigo-400" title={summary.modelSummary}>
+                {summary.modelSummary}
+              </p>
+            </div>
+          </div>
 
-            <div className="divide-y divide-border/55">
+          <section className="rounded-xl border border-border/60 bg-card/55 p-3">
+            <h4 className="text-sm font-semibold text-foreground">情绪分数走势</h4>
+            <div className="mt-3 h-32">
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full overflow-visible">
+                {[20, 50, 80].map((score) => (
+                  <line
+                    key={score}
+                    x1="0"
+                    x2="100"
+                    y1={92 - ((score - 20) / 60) * 72}
+                    y2={92 - ((score - 20) / 60) * 72}
+                    stroke="currentColor"
+                    strokeOpacity="0.12"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ))}
+                {chartPoints ? (
+                  <>
+                    <polyline
+                      points={chartPoints}
+                      fill="none"
+                      stroke="var(--color-primary, #22d3ee)"
+                      strokeWidth="2.5"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                    {chartPoints.split(' ').map((point, index) => {
+                      const [cx, cy] = point.split(',');
+                      return (
+                        <circle
+                          key={`${point}-${index}`}
+                          cx={cx}
+                          cy={cy}
+                          r="1.6"
+                          fill="var(--color-primary, #22d3ee)"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      );
+                    })}
+                  </>
+                ) : null}
+              </svg>
+            </div>
+          </section>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex gap-2">
+              {RANGE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => onRangeChange(option.value)}
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                    filters.range === option.value
+                      ? 'border-primary/50 bg-primary/10 text-primary'
+                      : 'border-border/70 bg-background/50 text-secondary-text hover:bg-hover hover:text-foreground'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <div className="rounded-lg border border-border/70 bg-background/50 px-2.5 py-1.5 text-xs text-secondary-text">
+              模型：全部
+            </div>
+            <div className="rounded-lg border border-border/70 bg-background/50 px-2.5 py-1.5 text-xs text-secondary-text">
+              排序：最新优先
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-border/60">
+            <div className="grid grid-cols-[5rem_minmax(0,1.3fr)_2.5rem_4.5rem_4rem_minmax(0,1.2fr)] border-b border-border/60 bg-background/45 px-2 py-2 text-xs font-medium text-secondary-text">
+              <span>时间</span>
+              <span>建议/趋势</span>
+              <span>分数</span>
+              <span>模型</span>
+              <span>涨跌幅</span>
+              <span>摘要</span>
+            </div>
+            <div className="max-h-[28rem] divide-y divide-border/55 overflow-y-auto">
               {items.map((item) => {
                 const isCurrent = item.id === currentRecordId;
                 const sentimentColor = isPresent(item.sentimentScore)
                   ? getSentimentColor(item.sentimentScore)
                   : undefined;
-                const scoreStyle = sentimentColor
-                  ? {
-                      color: sentimentColor,
-                      borderColor: `${sentimentColor}40`,
-                      backgroundColor: `${sentimentColor}12`,
-                    }
-                  : undefined;
-
                 return (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => onSelectRecord(item.id)}
-                    className={`grid w-full grid-cols-1 gap-3 px-4 py-3 text-left transition-colors sm:grid-cols-[8.5rem_minmax(0,1fr)_7.5rem] ${
-                      isCurrent ? 'bg-primary/8' : 'hover:bg-hover/55'
+                    className={`grid w-full grid-cols-[5rem_minmax(0,1.3fr)_2.5rem_4.5rem_4rem_minmax(0,1.2fr)] items-center gap-2 px-2 py-2 text-left text-xs transition-colors ${
+                      isCurrent ? 'bg-primary/10 ring-1 ring-inset ring-primary/35' : 'hover:bg-hover/55'
                     }`}
                   >
-                    <div className="space-y-1">
-                      <p className="font-mono text-xs text-secondary-text">{formatDateTime(item.createdAt)}</p>
-                      <div className="flex flex-wrap gap-1.5">
+                    <span className="font-mono text-secondary-text">
+                      {formatDateTime(item.createdAt).slice(5)}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="flex flex-wrap gap-1">
                         {isCurrent ? (
                           <Badge variant="info" size="sm" className="shadow-none">
                             当前
                           </Badge>
                         ) : null}
-                        {item.reportType ? (
-                          <Badge variant="default" size="sm" className="shadow-none">
-                            {formatReportType(item.reportType)}
+                        {formatAdvice(item).split('/').map((part, index) => (
+                          <Badge key={`${item.id}-${part}-${index}`} variant="default" size="sm" className="shadow-none">
+                            {part.trim()}
                           </Badge>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-semibold text-foreground">{formatAdvice(item)}</span>
-                        {isPresent(item.sentimentScore) ? (
-                          <span
-                            className="rounded-full border px-2 py-0.5 font-mono text-xs font-semibold"
-                            style={scoreStyle}
-                          >
-                            {item.sentimentScore}
-                          </span>
-                        ) : null}
-                        <span
-                          className="font-mono text-xs text-secondary-text"
-                          style={getPriceChangeStyle(item.changePct)}
-                        >
-                          {formatChangePct(item.changePct)}
-                        </span>
-                      </div>
-                      <p className="mt-1 line-clamp-2 text-sm leading-6 text-secondary-text">
-                        {item.analysisSummary || '暂无分析摘要'}
-                      </p>
-                    </div>
-
-                    <div className="min-w-0 text-left sm:text-right">
-                      <p className="truncate text-xs text-secondary-text" title={item.modelUsed || '未记录模型'}>
-                        {item.modelUsed || '未记录模型'}
-                      </p>
-                      <p className="mt-1 font-mono text-xs text-secondary-text">
-                        价格 {formatNumber(item.currentPrice, 2)}
-                      </p>
-                    </div>
+                        ))}
+                      </span>
+                    </span>
+                    <span
+                      className="font-mono font-semibold"
+                      style={sentimentColor ? { color: sentimentColor } : undefined}
+                    >
+                      {formatNumber(item.sentimentScore, 0)}
+                    </span>
+                    <span className="truncate text-secondary-text" title={item.modelUsed || '未记录模型'}>
+                      {item.modelUsed || formatReportType(item.reportType) || '--'}
+                    </span>
+                    <span className="font-mono" style={getPriceChangeStyle(item.changePct)}>
+                      {formatChangePct(item.changePct)}
+                    </span>
+                    <span className="line-clamp-2 text-secondary-text">
+                      {item.analysisSummary || '暂无分析摘要'}
+                    </span>
                   </button>
                 );
               })}
             </div>
+          </div>
 
+          <div className="flex flex-col items-center gap-2">
             {hasMore ? (
-              <div className="flex justify-center border-t border-border/60 px-4 py-3">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={onLoadMore}
-                  isLoading={isLoadingMore}
-                  loadingText="加载中..."
-                >
-                  加载更多
-                </Button>
-              </div>
-            ) : null}
-          </section>
-        )}
-      </div>
-    </Drawer>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="w-full"
+                onClick={onLoadMore}
+                isLoading={isLoadingMore}
+                loadingText="加载中..."
+              >
+                加载更多
+              </Button>
+            ) : (
+              <p className="text-xs text-secondary-text">已加载 {items.length} / {total || items.length} 条</p>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 };

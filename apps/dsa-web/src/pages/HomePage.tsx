@@ -802,7 +802,7 @@ const HomePage: React.FC = () => {
                 <DashboardStateBlock title="加载报告中..." loading />
               </div>
             ) : selectedReport ? (
-              <div className="max-w-4xl space-y-4 pb-8">
+              <div className={isHistoryTrendOpen ? 'max-w-[78rem] space-y-4 pb-8' : 'max-w-4xl space-y-4 pb-8'}>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <Button
                     variant="home-action-ai"
@@ -830,7 +830,14 @@ const HomePage: React.FC = () => {
                     variant="home-action-ai"
                     size="sm"
                     disabled={selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
-                    onClick={() => void openHistoryTrend()}
+                    className={isHistoryTrendOpen ? 'border-primary/70 bg-primary/15 text-primary shadow-glow-cyan' : undefined}
+                    onClick={() => {
+                      if (isHistoryTrendOpen) {
+                        closeHistoryTrend();
+                        return;
+                      }
+                      void openHistoryTrend();
+                    }}
                   >
                     <BarChart3 className="h-4 w-4" />
                     历史趋势
@@ -847,7 +854,28 @@ const HomePage: React.FC = () => {
                     {reportText.fullReport}
                   </Button>
                 </div>
-                <ReportSummary data={selectedReport} isHistory />
+                <ReportSummary
+                  data={selectedReport}
+                  isHistory
+                  railContent={isHistoryTrendOpen ? (
+                    <StockHistoryTrendDrawer
+                      key={`stock-history-${selectedReport.meta.id}`}
+                      report={selectedReport}
+                      items={stockHistoryItems}
+                      total={stockHistoryTotal}
+                      hasMore={stockHistoryHasMore}
+                      isLoading={isLoadingStockHistory}
+                      isLoadingMore={isLoadingMoreStockHistory}
+                      error={stockHistoryError}
+                      filters={stockHistoryFilters}
+                      onClose={closeHistoryTrend}
+                      onRangeChange={(range) => void setStockHistoryRange(range)}
+                      onLoadMore={() => void loadMoreStockHistory()}
+                      onSelectRecord={(recordId) => void selectHistoryItem(recordId)}
+                      onRetry={() => void openHistoryTrend()}
+                    />
+                  ) : undefined}
+                />
               </div>
             ) : (
               <div className="flex h-full items-center justify-center">
@@ -875,25 +903,6 @@ const HomePage: React.FC = () => {
           stockCode={selectedReport.meta.stockCode}
           reportLanguage={reportLanguage}
           onClose={closeMarkdownDrawer}
-        />
-      ) : null}
-
-      {isHistoryTrendOpen && selectedReport?.meta.id ? (
-        <StockHistoryTrendDrawer
-          key={`stock-history-${selectedReport.meta.id}`}
-          report={selectedReport}
-          items={stockHistoryItems}
-          total={stockHistoryTotal}
-          hasMore={stockHistoryHasMore}
-          isLoading={isLoadingStockHistory}
-          isLoadingMore={isLoadingMoreStockHistory}
-          error={stockHistoryError}
-          filters={stockHistoryFilters}
-          onClose={closeHistoryTrend}
-          onRangeChange={(range) => void setStockHistoryRange(range)}
-          onLoadMore={() => void loadMoreStockHistory()}
-          onSelectRecord={(recordId) => void selectHistoryItem(recordId)}
-          onRetry={() => void openHistoryTrend()}
         />
       ) : null}
 
