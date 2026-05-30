@@ -13,7 +13,7 @@ from typing import Optional
 import requests
 
 from src.config import Config
-from src.formatters import chunk_content_by_max_bytes
+from src.formatters import chunk_markdown_preserving_blocks, format_slack_mrkdwn
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +59,18 @@ class SlackSender:
         Returns:
             是否发送成功
         """
-        # 按字节分块，避免单条消息超限
+        formatted_content = format_slack_mrkdwn(content)
+
+        # 按 Slack text 上限分块，避免单条消息超限
         try:
-            chunks = chunk_content_by_max_bytes(content, _TEXT_LIMIT, add_page_marker=True)
+            chunks = chunk_markdown_preserving_blocks(
+                formatted_content,
+                _TEXT_LIMIT,
+                add_page_marker=True,
+            )
         except Exception as e:
             logger.error(f"分割 Slack 消息失败: {e}, 尝试整段发送。")
-            chunks = [content]
+            chunks = [formatted_content]
 
         # 优先使用 Bot API（与 _send_slack_image 保持一致）
         if self._use_bot:
@@ -84,10 +90,13 @@ class SlackSender:
         如果内容超过单个 section block 限制，会自动拆分为多个 block。
         """
         blocks = []
-        # 按 block text 上限拆分
-        pos = 0
-        while pos < len(content):
-            segment = content[pos:pos + _BLOCK_TEXT_LIMIT]
+        # 按 block text 上限拆分，避免切断代码块 / 链接 / 行内代码
+        try:
+            segments = chunk_markdown_preserving_blocks(content, _BLOCK_TEXT_LIMIT)
+        except Exception:
+            segments = [content[i:i + _BLOCK_TEXT_LIMIT] for i in range(0, len(content), _BLOCK_TEXT_LIMIT)]
+
+        for segment in segments:
             blocks.append({
                 "type": "section",
                 "text": {
@@ -95,7 +104,6 @@ class SlackSender:
                     "text": segment
                 }
             })
-            pos += _BLOCK_TEXT_LIMIT
         return blocks
 
     def _send_slack_webhook(self, content: str, *, timeout_seconds: Optional[float] = None) -> bool:

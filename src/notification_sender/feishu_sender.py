@@ -18,8 +18,9 @@ from src.config import Config
 from src.formatters import (
     MIN_MAX_BYTES,
     PAGE_MARKER_SAFE_BYTES,
-    chunk_content_by_max_bytes,
+    chunk_markdown_preserving_blocks,
     format_feishu_markdown,
+    utf8_len,
 )
 
 
@@ -160,7 +161,12 @@ class FeishuSender:
             是否全部发送成功
         """
         try:
-            chunks = chunk_content_by_max_bytes(content, max_bytes, add_page_marker=True)
+            chunks = chunk_markdown_preserving_blocks(
+                content,
+                max_bytes,
+                len_fn=utf8_len,
+                add_page_marker=True,
+            )
         except ValueError as e:
             logger.error("飞书消息分片失败，单片预算不足以安全分页（关键词过长或 max_bytes 过小）: %s", e)
             return False

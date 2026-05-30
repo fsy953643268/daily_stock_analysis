@@ -909,6 +909,34 @@ class TestSlackSender(unittest.TestCase):
         self.assertEqual(blocks[0]["type"], "section")
         self.assertEqual(blocks[0]["text"]["type"], "mrkdwn")
 
+    def test_build_blocks_preserves_code_fences_when_splitting(self):
+        cfg = _config(slack_webhook_url="https://hooks.slack.com/services/T/B/xxx")
+        sender = SlackSender(cfg)
+        content = "```text\n" + "\n".join(f"line {i}" for i in range(700)) + "\n```"
+
+        blocks = sender._build_blocks(content)
+
+        self.assertGreater(len(blocks), 1)
+        for block in blocks:
+            text = block["text"]["text"]
+            self.assertEqual(text.count("```") % 2, 0)
+
+    @mock.patch("src.notification_sender.slack_sender.requests.post")
+    def test_send_formats_slack_mrkdwn_payload(self, mock_post):
+        resp = mock.MagicMock()
+        resp.status_code = 200
+        resp.text = "ok"
+        mock_post.return_value = resp
+        cfg = _config(slack_webhook_url="https://hooks.slack.com/services/T/B/xxx")
+        sender = SlackSender(cfg)
+
+        result = sender.send_to_slack("## 日报\n\n[详情](https://example.com/report)")
+
+        self.assertTrue(result)
+        payload = json.loads(mock_post.call_args.kwargs["data"].decode("utf-8"))
+        self.assertIn("*日报*", payload["text"])
+        self.assertIn("<https://example.com/report|详情>", payload["text"])
+
     @mock.patch("src.notification_sender.slack_sender.requests.post")
     def test_send_text_prefers_bot_when_both_configured(self, mock_post):
         """When both webhook and bot are configured, text must go via bot
@@ -975,6 +1003,20 @@ class TestTelegramSender(unittest.TestCase):
         self.assertIn("sendMessage", mock_post.call_args[0][0])
 
     @mock.patch("src.notification_sender.telegram_sender.requests.post")
+    def test_send_uses_utf16_safe_chunking(self, mock_post):
+        mock_post.return_value = _response(200, {"ok": True})
+        cfg = _config(telegram_bot_token="BOT", telegram_chat_id="CHAT")
+        sender = TelegramSender(cfg)
+
+        result = sender.send_to_telegram("😀" * 2100)
+
+        self.assertTrue(result)
+        self.assertGreater(mock_post.call_count, 1)
+        for call in mock_post.call_args_list:
+            payload = call.kwargs["json"]
+            self.assertLessEqual(len(payload["text"].encode("utf-16-le")) // 2, 4096)
+
+    @mock.patch("src.notification_sender.telegram_sender.requests.post")
     def test_send_retries_plain_text_when_markdown_http_400(self, mock_post):
         markdown_error = _response(400)
         markdown_error.text = (
@@ -994,6 +1036,26 @@ class TestTelegramSender(unittest.TestCase):
         self.assertEqual(first_payload["parse_mode"], "Markdown")
         self.assertNotIn("parse_mode", second_payload)
         self.assertEqual(second_payload["text"], "*ST宝实")
+
+    @mock.patch("src.notification_sender.telegram_sender.requests.post")
+    def test_send_plain_text_fallback_uses_original_unescaped_text(self, mock_post):
+        markdown_error = _response(400)
+        markdown_error.text = (
+            '{"ok":false,"error_code":400,"description":"Bad Request: can\'t parse entities"}'
+        )
+        plain_text_success = _response(200, {"ok": True})
+        mock_post.side_effect = [markdown_error, plain_text_success]
+
+        cfg = _config(telegram_bot_token="BOT", telegram_chat_id="CHAT")
+        sender = TelegramSender(cfg)
+        content = "关注 [AAPL] (未闭合)"
+        result = sender.send_to_telegram(content)
+
+        self.assertTrue(result)
+        first_payload = mock_post.call_args_list[0][1]["json"]
+        second_payload = mock_post.call_args_list[1][1]["json"]
+        self.assertEqual(first_payload["text"], r"关注 \[AAPL\] \(未闭合\)")
+        self.assertEqual(second_payload["text"], content)
 
     @mock.patch("src.notification_sender.telegram_sender.requests.post")
     def test_send_plain_text_fallback_handles_non_json_200(self, mock_post):

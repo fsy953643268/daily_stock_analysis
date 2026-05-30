@@ -1,0 +1,182 @@
+# -*- coding: utf-8 -*-
+"""Notification channel rendering capability profiles.
+
+This module intentionally uses plain channel strings instead of importing
+``NotificationChannel`` from ``src.notification``.  The notification service may
+import these profiles later without creating a circular dependency.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Mapping, Optional, Tuple
+
+
+@dataclass(frozen=True)
+class ChannelProfile:
+    """Static rendering capabilities for one notification channel."""
+
+    channel: str
+    markdown: str
+    default_mode: str
+    max_text_chars: Optional[int] = None
+    max_text_bytes: Optional[int] = None
+    supports_card: bool = False
+    supports_image: bool = False
+    supports_file: bool = False
+    supports_link: bool = True
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class PreparedMessage:
+    """A channel-specific prepared notification message.
+
+    The object describes how a message is ready to be sent for a channel without
+    changing the original report semantics.  Senders can consume the fields they
+    support and fall back to ``fallback_text`` or ``text`` when a richer payload
+    is unavailable.
+    """
+
+    channel: str
+    text: str
+    formatted_text: Optional[str] = None
+    card_payload: Optional[Mapping[str, Any]] = None
+    fallback_text: Optional[str] = None
+    attachments: Tuple[Any, ...] = ()
+    diagnostics: Tuple[str, ...] = ()
+
+    @property
+    def content_for_text_send(self) -> str:
+        """Return the best text payload for legacy text senders."""
+
+        return self.formatted_text or self.fallback_text or self.text
+
+
+CHANNEL_PROFILES: Dict[str, ChannelProfile] = {
+    "wechat": ChannelProfile(
+        channel="wechat",
+        markdown="wechat_markdown",
+        default_mode="wechat_dashboard",
+        max_text_bytes=4096,
+        supports_image=True,
+        supports_link=True,
+        notes="Enterprise WeChat keeps the existing dashboard-oriented report.",
+    ),
+    "feishu": ChannelProfile(
+        channel="feishu",
+        markdown="lark_md",
+        default_mode="full_report",
+        max_text_bytes=20000,
+        supports_card=True,
+        supports_file=True,
+        supports_link=True,
+        notes="Feishu uses lark_md/card payloads and needs table fallbacks.",
+    ),
+    "telegram": ChannelProfile(
+        channel="telegram",
+        markdown="markdown_v2",
+        default_mode="full_report",
+        max_text_chars=4096,
+        supports_image=True,
+        supports_link=True,
+        notes="Telegram length limits are measured in UTF-16 code units.",
+    ),
+    "email": ChannelProfile(
+        channel="email",
+        markdown="html",
+        default_mode="full_html",
+        supports_image=True,
+        supports_file=True,
+        supports_link=True,
+        notes="Email remains the high-fidelity full-report carrier.",
+    ),
+    "pushover": ChannelProfile(
+        channel="pushover",
+        markdown="plain_text",
+        default_mode="plain_fallback",
+        max_text_chars=1024,
+        supports_link=True,
+    ),
+    "ntfy": ChannelProfile(
+        channel="ntfy",
+        markdown="plain_text",
+        default_mode="plain_fallback",
+        supports_link=True,
+    ),
+    "gotify": ChannelProfile(
+        channel="gotify",
+        markdown="markdown",
+        default_mode="full_report",
+        supports_link=True,
+    ),
+    "pushplus": ChannelProfile(
+        channel="pushplus",
+        markdown="markdown",
+        default_mode="full_report",
+        supports_link=True,
+    ),
+    "serverchan3": ChannelProfile(
+        channel="serverchan3",
+        markdown="markdown",
+        default_mode="full_report",
+        supports_link=True,
+    ),
+    "custom": ChannelProfile(
+        channel="custom",
+        markdown="channel_specific",
+        default_mode="full_report",
+        supports_image=True,
+        supports_link=True,
+        notes="Custom webhook payload shape can be configured by templates.",
+    ),
+    "discord": ChannelProfile(
+        channel="discord",
+        markdown="discord_markdown",
+        default_mode="full_report",
+        max_text_chars=2000,
+        supports_link=True,
+    ),
+    "slack": ChannelProfile(
+        channel="slack",
+        markdown="mrkdwn",
+        default_mode="full_report",
+        max_text_chars=39000,
+        supports_image=True,
+        supports_file=True,
+        supports_link=True,
+        notes="Slack sections should avoid splitting markdown blocks.",
+    ),
+    "astrbot": ChannelProfile(
+        channel="astrbot",
+        markdown="plain_text",
+        default_mode="plain_fallback",
+        supports_link=True,
+    ),
+    "unknown": ChannelProfile(
+        channel="unknown",
+        markdown="plain_text",
+        default_mode="plain_fallback",
+        supports_link=False,
+    ),
+}
+
+
+def normalize_channel_name(channel: Any) -> str:
+    """Normalize enum-like or string channel values into profile keys."""
+
+    value = getattr(channel, "value", channel)
+    return str(value or "").strip().lower() or "unknown"
+
+
+def get_channel_profile(channel: Any) -> ChannelProfile:
+    """Return the channel profile, falling back to ``unknown``."""
+
+    name = normalize_channel_name(channel)
+    return CHANNEL_PROFILES.get(name, CHANNEL_PROFILES["unknown"])
+
+
+def all_channel_profiles() -> Tuple[ChannelProfile, ...]:
+    """Return all profiles in deterministic declaration order."""
+
+    return tuple(CHANNEL_PROFILES.values())

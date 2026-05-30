@@ -8,7 +8,7 @@
 """
 
 import re
-from typing import List
+from typing import Callable, List, Optional
 
 import markdown2
 
@@ -18,6 +18,8 @@ PAGE_MARKER_SAFE_BYTES = 16 # "\n\n📄 9999/9999"
 PAGE_MARKER_SAFE_LEN = 13   # "\n\n📄 9999/9999"
 MIN_MAX_WORDS = 10
 MIN_MAX_BYTES = 40
+FENCED_CODE_BLOCK_RE = re.compile(r"(^```[^\n]*\n.*?^```[ \t]*$)", re.MULTILINE | re.DOTALL)
+FENCED_CODE_BLOCK_PLACEHOLDER = "@@DSA_FENCED_CODE_BLOCK_{}@@"
 
 # Unicode code point ranges for special characters.
 _SPECIAL_CHAR_RANGE = (0x10000, 0xFFFFF)
@@ -264,6 +266,275 @@ def _bytes(s: str) -> int:
     return len(s.encode('utf-8'))
 
 
+def utf8_len(s: str) -> int:
+    """Return the number of UTF-8 bytes used by ``s``."""
+
+    return len(s.encode("utf-8"))
+
+
+def utf16_len(s: str) -> int:
+    """Return the number of UTF-16 code units used by ``s``.
+
+    Telegram's 4096-character message limit is effectively counted in UTF-16
+    units, so astral-plane characters such as emoji consume two units.
+    """
+
+    return len(s.encode("utf-16-le")) // 2
+
+
+def _custom_unit_to_index(text: str, budget: int, len_fn: Callable[[str], int]) -> int:
+    """Map a custom-unit budget to the largest safe Python string index."""
+
+    if len_fn(text) <= budget:
+        return len(text)
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if len_fn(text[:mid]) <= budget:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+
+def _has_unclosed_inline_code(text: str) -> bool:
+    """Return whether ``text`` ends inside a single-backtick inline code span."""
+
+    escaped = False
+    count = 0
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\" and not escaped:
+            escaped = True
+            i += 1
+            continue
+        if ch == "`" and not escaped:
+            # Triple backticks are handled as fenced code by the caller; skip
+            # them here so fence delimiters do not look like inline spans.
+            if text[i:i + 3] == "```":
+                i += 3
+                escaped = False
+                continue
+            count += 1
+        escaped = False
+        i += 1
+    return count % 2 == 1
+
+
+def _last_unclosed_markdown_link_start(text: str) -> int:
+    """Return the start index of an inline Markdown link split in progress."""
+
+    last_open_paren = text.rfind("](")
+    last_close_paren = text.rfind(")")
+    if last_open_paren > last_close_paren:
+        label_start = text.rfind("[", 0, last_open_paren)
+        return label_start if label_start >= 0 else last_open_paren
+
+    last_open_bracket = text.rfind("[")
+    last_close_bracket = text.rfind("]")
+    if last_open_bracket > last_close_bracket:
+        return last_open_bracket
+
+    return -1
+
+
+def chunk_markdown_preserving_blocks(
+    content: str,
+    max_units: int,
+    *,
+    len_fn: Optional[Callable[[str], int]] = None,
+    add_page_marker: bool = False,
+) -> List[str]:
+    """Split Markdown while preserving common formatting boundaries.
+
+    The splitter is intentionally conservative and does not alter report
+    semantics.  If a split lands inside a fenced code block, the current chunk is
+    closed and the next chunk reopens the same fence language.  It also avoids
+    splitting inside inline code spans and Markdown links, and supports custom
+    length functions such as :func:`utf16_len`.
+    """
+
+    measure = len_fn or len
+    if max_units < MIN_MAX_WORDS:
+        raise ValueError(f"max_units={max_units} < {MIN_MAX_WORDS}, 可能陷入无限递归。")
+    if measure(content) <= max_units:
+        return [content]
+
+    marker_reserve = measure(_page_marker(9998, 9998)) if add_page_marker else 0
+    indicator_reserve = measure("\n\n(9999/9999)")
+    fence_close = "\n```"
+    chunks: List[str] = []
+    remaining = content
+    carry_lang: Optional[str] = None
+
+    while remaining:
+        prefix = f"```{carry_lang}\n" if carry_lang is not None else ""
+        headroom = max_units - marker_reserve - indicator_reserve - measure(prefix) - measure(fence_close)
+        if headroom < MIN_MAX_WORDS:
+            headroom = max(MIN_MAX_WORDS, max_units - marker_reserve - indicator_reserve - measure(prefix))
+        if headroom <= 0:
+            raise ValueError("max_units is too small for markdown-preserving chunking")
+
+        if measure(prefix) + measure(remaining) <= max_units - marker_reserve - indicator_reserve:
+            chunks.append(prefix + remaining)
+            break
+
+        cp_limit = (
+            _custom_unit_to_index(remaining, headroom, measure)
+            if measure is not len else min(headroom, len(remaining))
+        )
+        region = remaining[:cp_limit]
+        split_at = region.rfind("\n\n")
+        if split_at < cp_limit // 2:
+            split_at = region.rfind("\n")
+        if split_at < cp_limit // 2:
+            split_at = region.rfind(" ")
+        if split_at < 1:
+            split_at = cp_limit
+
+        candidate = remaining[:split_at]
+        unsafe_start = len(candidate)
+        if _has_unclosed_inline_code(candidate):
+            last_tick = candidate.rfind("`")
+            if last_tick >= 0:
+                unsafe_start = min(unsafe_start, last_tick)
+
+        link_start = _last_unclosed_markdown_link_start(candidate)
+        if link_start >= 0:
+            unsafe_start = min(unsafe_start, link_start)
+
+        if unsafe_start < len(candidate):
+            safe_split = max(candidate.rfind(" ", 0, unsafe_start), candidate.rfind("\n", 0, unsafe_start))
+            if safe_split > 0:
+                split_at = safe_split
+
+        chunk_body = remaining[:split_at].rstrip()
+        remaining = remaining[split_at:].lstrip()
+        full_chunk = prefix + chunk_body
+
+        in_code = carry_lang is not None
+        lang = carry_lang or ""
+        for line in chunk_body.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                if in_code:
+                    in_code = False
+                    lang = ""
+                else:
+                    in_code = True
+                    tag = stripped[3:].strip()
+                    lang = tag.split()[0] if tag else ""
+
+        if in_code:
+            full_chunk += fence_close
+            carry_lang = lang
+        else:
+            carry_lang = None
+
+        chunks.append(full_chunk)
+
+    if len(chunks) > 1:
+        total = len(chunks)
+        for i, chunk in enumerate(chunks):
+            suffix = f"\n\n({i + 1}/{total})"
+            if add_page_marker:
+                suffix += _page_marker(i, total)
+            chunks[i] = chunk + suffix
+    elif add_page_marker:
+        chunks[0] = chunks[0] + _page_marker(0, 1)
+    return chunks
+
+
+def _is_markdown_table_separator(row: str) -> bool:
+    return bool(re.match(r'^\s*\|?\s*[:-]+\s*(\|\s*[:-]+\s*)+\|?\s*$', row))
+
+
+def _parse_markdown_table_row(row: str) -> List[str]:
+    cells = [c.strip() for c in row.strip().strip('|').split('|')]
+    return [c for c in cells if c]
+
+
+def _flush_table_as_key_value_rows(buffer: List[str], output: List[str], *, bullet: str) -> None:
+    if not buffer:
+        return
+
+    rows = []
+    for raw in buffer:
+        if _is_markdown_table_separator(raw):
+            continue
+        parsed = _parse_markdown_table_row(raw)
+        if parsed:
+            rows.append(parsed)
+
+    if not rows:
+        return
+
+    header = rows[0]
+    data_rows = rows[1:] if len(rows) > 1 else []
+    for row in data_rows:
+        pairs = []
+        for idx, cell in enumerate(row):
+            key = header[idx] if idx < len(header) else f"列{idx + 1}"
+            pairs.append(f"{key}：{cell}")
+        output.append(f"{bullet} {' | '.join(pairs)}")
+
+
+def _protect_fenced_code_blocks(content: str) -> tuple[str, List[str]]:
+    blocks: List[str] = []
+
+    def _replace(match: re.Match) -> str:
+        blocks.append(match.group(0))
+        return FENCED_CODE_BLOCK_PLACEHOLDER.format(len(blocks) - 1)
+
+    return FENCED_CODE_BLOCK_RE.sub(_replace, content), blocks
+
+
+def _restore_fenced_code_blocks(content: str, blocks: List[str]) -> str:
+    restored = content
+    for idx, block in enumerate(blocks):
+        restored = restored.replace(FENCED_CODE_BLOCK_PLACEHOLDER.format(idx), block)
+    return restored
+
+
+def _transform_outside_fenced_code_blocks(content: str, transform: Callable[[str], str]) -> str:
+    protected, blocks = _protect_fenced_code_blocks(content)
+    return _restore_fenced_code_blocks(transform(protected), blocks)
+
+
+def _markdown_tables_to_key_value_rows_unprotected(content: str, *, bullet: str) -> str:
+    """Convert pipe tables to compact key-value rows for chat clients."""
+
+    lines: List[str] = []
+    table_buffer: List[str] = []
+
+    for raw_line in content.splitlines():
+        line = raw_line.rstrip()
+        if line.strip().startswith('|'):
+            table_buffer.append(line)
+            continue
+
+        if table_buffer:
+            _flush_table_as_key_value_rows(table_buffer, lines, bullet=bullet)
+            table_buffer = []
+
+        lines.append(line)
+
+    if table_buffer:
+        _flush_table_as_key_value_rows(table_buffer, lines, bullet=bullet)
+
+    return "\n".join(lines).strip()
+
+
+def markdown_tables_to_key_value_rows(content: str, *, bullet: str = "•") -> str:
+    """Convert pipe tables to compact key-value rows outside fenced code blocks."""
+
+    return _transform_outside_fenced_code_blocks(
+        content,
+        lambda text: _markdown_tables_to_key_value_rows_unprotected(text, bullet=bullet),
+    ).strip()
+
+
 def _chunk_by_max_bytes(content: str, max_bytes: int) -> List[str]:
     if _bytes(content) <= max_bytes:
         return [content]
@@ -398,61 +669,7 @@ def slice_at_max_bytes(text: str, max_bytes: int) -> tuple[str, str]:
     return truncated, text[len(truncated):]
 
 
-def format_feishu_markdown(content: str) -> str:
-    """
-    将通用 Markdown 转换为飞书 lark_md 更友好的格式
-    
-    转换规则：
-    - 飞书不支持 Markdown 标题（# / ## / ###），用加粗代替
-    - 引用块使用前缀替代
-    - 分隔线统一为细线
-    - 表格转换为条目列表
-    
-    Args:
-        content: 原始 Markdown 内容
-        
-    Returns:
-        转换后的飞书 Markdown 格式内容
-        
-    Example:
-        >>> markdown = "# 标题\\n> 引用\\n| 列1 | 列2 |"
-        >>> formatted = format_feishu_markdown(markdown)
-        >>> print(formatted)
-        **标题**
-        💬 引用
-        • 列1：值1 | 列2：值2
-    """
-    def _flush_table_rows(buffer: List[str], output: List[str]) -> None:
-        """将表格缓冲区中的行转换为飞书格式"""
-        if not buffer:
-            return
-
-        def _parse_row(row: str) -> List[str]:
-            """解析表格行，提取单元格"""
-            cells = [c.strip() for c in row.strip().strip('|').split('|')]
-            return [c for c in cells if c]
-
-        rows = []
-        for raw in buffer:
-            # 跳过分隔行（如 |---|---|）
-            if re.match(r'^\s*\|?\s*[:-]+\s*(\|\s*[:-]+\s*)+\|?\s*$', raw):
-                continue
-            parsed = _parse_row(raw)
-            if parsed:
-                rows.append(parsed)
-
-        if not rows:
-            return
-
-        header = rows[0]
-        data_rows = rows[1:] if len(rows) > 1 else []
-        for row in data_rows:
-            pairs = []
-            for idx, cell in enumerate(row):
-                key = header[idx] if idx < len(header) else f"列{idx + 1}"
-                pairs.append(f"{key}：{cell}")
-            output.append(f"• {' | '.join(pairs)}")
-
+def _format_feishu_markdown_unprotected(content: str) -> str:
     lines = []
     table_buffer: List[str] = []
 
@@ -466,7 +683,7 @@ def format_feishu_markdown(content: str) -> str:
 
         # 刷新表格缓冲区
         if table_buffer:
-            _flush_table_rows(table_buffer, lines)
+            _flush_table_as_key_value_rows(table_buffer, lines, bullet="•")
             table_buffer = []
 
         # 转换标题（# ## ### 等）
@@ -476,7 +693,7 @@ def format_feishu_markdown(content: str) -> str:
         # 转换引用块
         elif line.startswith('> '):
             quote = line[2:].strip()
-            line = f"💬 {quote}" if quote else ""
+            line = f"引用：{quote}" if quote else ""
         # 转换分隔线
         elif line.strip() == '---':
             line = '────────'
@@ -488,9 +705,101 @@ def format_feishu_markdown(content: str) -> str:
 
     # 处理末尾的表格
     if table_buffer:
-        _flush_table_rows(table_buffer, lines)
+        _flush_table_as_key_value_rows(table_buffer, lines, bullet="•")
 
     return "\n".join(lines).strip()
+
+
+def format_feishu_markdown(content: str) -> str:
+    """
+    将通用 Markdown 转换为飞书 lark_md 更友好的格式
+
+    转换规则：
+    - 飞书不支持 Markdown 标题（# / ## / ###），用加粗代替
+    - 引用块使用纯文本前缀替代
+    - 分隔线统一为细线
+    - 表格转换为条目列表
+    - 代码块中的 Markdown 示例保持原样
+
+    Args:
+        content: 原始 Markdown 内容
+
+    Returns:
+        转换后的飞书 Markdown 格式内容
+
+    Example:
+        >>> markdown = "# 标题\\n> 引用\\n| 列1 | 列2 |"
+        >>> formatted = format_feishu_markdown(markdown)
+        >>> print(formatted)
+        **标题**
+        引用：引用
+        • 列1：值1 | 列2：值2
+    """
+
+    return _transform_outside_fenced_code_blocks(
+        content,
+        _format_feishu_markdown_unprotected,
+    ).strip()
+
+
+def _format_telegram_markdown_unprotected(content: str) -> str:
+    """Convert common report Markdown to Telegram legacy Markdown."""
+
+    result = _markdown_tables_to_key_value_rows_unprotected(content, bullet="-")
+    result = re.sub(r'^#{1,6}\s+(.+)$', r'*\1*', result, flags=re.MULTILINE)
+    result = re.sub(r'\*\*(.+?)\*\*', r'*\1*', result)
+    result = re.sub(r'^\s*---+\s*$', '────────', result, flags=re.MULTILINE)
+
+    import uuid as _uuid
+    link_placeholder = f"__LINK_{_uuid.uuid4().hex[:8]}__"
+    links = []
+
+    def _save_link(match):
+        links.append(match.group(0))
+        return f"{link_placeholder}{len(links) - 1}"
+
+    result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _save_link, result)
+    for char in ['[', ']', '(', ')']:
+        result = result.replace(char, f'\\{char}')
+    for i, link in enumerate(links):
+        result = result.replace(f"{link_placeholder}{i}", link)
+    return result.strip()
+
+
+def format_telegram_markdown(content: str) -> str:
+    """Convert common report Markdown to Telegram legacy Markdown."""
+
+    return _transform_outside_fenced_code_blocks(
+        content,
+        _format_telegram_markdown_unprotected,
+    ).strip()
+
+
+def format_wechat_markdown(content: str) -> str:
+    """Keep WeChat Markdown style while making pipe tables mobile-readable."""
+
+    return markdown_tables_to_key_value_rows(content, bullet="•")
+
+
+def _format_slack_mrkdwn_unprotected(content: str) -> str:
+    """Convert common report Markdown to Slack mrkdwn."""
+
+    result = _markdown_tables_to_key_value_rows_unprotected(content, bullet="•")
+    result = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', r'<\2|\1>', result)
+    result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<\2|\1>', result)
+    result = re.sub(r'^#{1,6}\s+(.+)$', r'*\1*', result, flags=re.MULTILINE)
+    result = re.sub(r'\*\*(.+?)\*\*', r'*\1*', result)
+    result = re.sub(r'^\s*---+\s*$', '────────', result, flags=re.MULTILINE)
+    return result.strip()
+
+
+def format_slack_mrkdwn(content: str) -> str:
+    """Convert common report Markdown to Slack mrkdwn."""
+
+    return _transform_outside_fenced_code_blocks(
+        content,
+        _format_slack_mrkdwn_unprotected,
+    ).strip()
 
 
 def _chunk_by_separators(content: str) -> tuple[list[str], str]:

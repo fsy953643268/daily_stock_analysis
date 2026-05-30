@@ -35,6 +35,22 @@
 - WebPush、Apprise、更细粒度路由、跨进程降噪和真实每日摘要暂不进入运行时实现；相关配置如未来引入，应先更新本文档、`.env.example`、Web 元数据与回归测试。
 - Bark 保持 custom webhook 基线，不新增 `BARK_*` 一等配置。
 
+## 报告渲染与分片
+
+通知报告默认仍发送完整报告，不默认改成 summary-only，也不改变现有渠道路由、降噪、图片 opt-in 或企业微信 dashboard 默认行为。#1311 的报告渲染优化只做渠道适配：保留报告章节、标题层级、信号/结论顺序和核心字段，再按平台能力清洗 Markdown 与安全分片。
+
+渠道能力画像由 `src/notification_capabilities.py` 维护，包含 Markdown 类型、单条长度限制、card/image/file/link 支持情况和默认投递策略。发送前结果可用 `PreparedMessage` 表达，但现有发送器仍保留文本 fallback。
+
+当前已接入的报告格式化规则：
+
+- 飞书：继续使用 interactive card + `lark_md`，标题转加粗、引用和分隔线降级，pipe table 转移动端可读 key-value 行；长报告使用结构感知分片，避免切坏代码块、行内代码和链接。
+- 企业微信：保持现有 markdown/text payload 和 dashboard 报告风格，pipe table 转移动端可读 key-value 行，超长消息分片切换为结构感知分片。
+- Telegram：继续使用 Bot API 文本消息和 plain-text fallback，报告先转 Telegram 可接受的 Markdown，表格转 key-value 行，并按 UTF-16 code units 分片。
+- Slack：发送前转 mrkdwn，标准 Markdown 链接转 `<url|text>`，表格转 key-value 行，Block Kit section 拆分不切断 Markdown 边界。
+- Email：仍作为完整 HTML 高保真载体，不受 IM 渠道格式化策略降级。
+
+Web report URL、飞书云文档和图片快照仍是可选增强；未配置可访问 Web base URL 时不生成 report URL。
+
 ## GitHub Actions 映射
 
 仓库自带 `.github/workflows/00-daily-analysis.yml` 只显式导入固定变量名。P0/P3/P4/P6 已把 Body 模板、安全项、PushPlus topic、路由、降噪、ntfy 和 Gotify 等通知 key 纳入默认 workflow。下面的表格由 `scripts/generate_notification_actions_env_table.py` 从 workflow `env:` 和通知诊断元数据生成，避免手写对照表和真实 Actions 映射继续漂移。
