@@ -140,6 +140,7 @@ class _ThreadlessTestClient:
         self.base_url = base_url
         self.raise_server_exceptions = raise_server_exceptions
         self.follow_redirects = follow_redirects
+        self.cookies = httpx.Cookies()
 
     def __enter__(self):
         return self
@@ -163,14 +164,20 @@ class _ThreadlessTestClient:
                         transport=transport,
                         base_url=self.base_url,
                         follow_redirects=follow_redirects,
+                        cookies=self.cookies,
                     ) as client:
-                        return await client.request(method, url, **kwargs)
+                        response = await client.request(method, url, **kwargs)
+                        self.cookies = httpx.Cookies(client.cookies)
+                        return response
             async with httpx.AsyncClient(
                 transport=transport,
                 base_url=self.base_url,
                 follow_redirects=follow_redirects,
+                cookies=self.cookies,
             ) as client:
-                return await client.request(method, url, **kwargs)
+                response = await client.request(method, url, **kwargs)
+                self.cookies = httpx.Cookies(client.cookies)
+                return response
 
         return asyncio.run(_send())
 
