@@ -97,3 +97,11 @@ GET  /api/v1/alphasift/strategies
 ## 风险提示
 
 AlphaSift 选股结果仅用于研究和辅助判断，不构成投资建议；市场有风险，交易决策和损益由使用者自行承担。
+
+## 最终验证结论（当前修订版）
+
+- 关键后端契约与安装状态链路：`python -m pytest tests/test_alphasift_api.py -q`（13 passed）。
+- Web 侧兼容性回归：`cd apps/dsa-web && npm run lint`、`npm run test`（56 passed，498 tests incl. skipped）与 `npm run build`（成功）。
+- 与 LLM 配置相关：
+  - 仅做 `settings` 展示分组与可视化归并，不会清理、迁移或改写 `LITELLM_MODEL`、`OPENAI_BASE_URL` 等 Legacy 字段；
+  - `ALPHASIFT_INSTALL_SPEC` 仅用于安装动作，不在状态响应中明文返回（仅返回 `install_spec_is_default`）。
