@@ -254,7 +254,7 @@ P6 只完成文档收口与核验路径，不改运行时契约：
 1. `pack.to_safe_dict()` 的脱敏链路不泄露 `api_key`、`token`、`cookie`、`webhook_url`、`secret`、`authorization`、`sendkey`、`license_key`。
 2. `format_analysis_context_pack_prompt_section()` 的 Prompt 摘要中仅保留状态/来源/告警字段，不出现 `items.value`、`news content`、`trend raw`、`webhook`、`token`。
 3. `render_analysis_context_pack_overview()` 的公开对象不包含 `items`、`value`、`news content`、`api_key`、`webhook` 等字段。
-4. `sanitize_context_snapshot_for_api()` 不返回 `analysis_context_pack_overview` 顶层字段，并保持 `context_snapshot` 中仅保留兼容历史消费的数据。
+4. `sanitize_context_snapshot_for_api()` 仅剥离 `analysis_context_pack_overview` 与 `market_phase_summary` 顶层字段，不改写其余 `context_snapshot` 兼容形态；更深层敏感字段清洗由 `AnalysisContextPack.to_safe_dict()` / `redact_sensitive_mapping()` 路径负责。
 
 ### 配置与文档同步说明
 

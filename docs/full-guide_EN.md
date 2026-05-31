@@ -672,11 +672,12 @@ History detail, sync analysis responses, and completed task status responses sti
 P6 is a doc-and-acceptance closure phase and does not change runtime contracts or introduce new configuration keys.
 
 - The runtime visibility rules for `pack` / `overview` / prompt summary / history-context channels are documented without changing any API payload shape.
-- Pre-release checks at this stage include secret leakage gates for:
+- Pre-release checks at this stage include runtime visibility and sanitization gates for:
   - `AnalysisContextPack.to_safe_dict()` and `redact_sensitive_mapping()`: no raw `api_key`, `token`, `cookie`, `webhook_url`, `secret`, `authorization`, `password`, `sendkey`, or `license_key`.
   - `format_analysis_context_pack_prompt_section()`: no `items.value`, full `news.content`, raw `trend_result`, raw `fundamentals`, webhook, or token strings.
-  - `render_analysis_context_pack_overview()` and `sanitize_context_snapshot_for_api()`: no full pack payload, no `items`, no `value`, and no sensitive keys in public response.
-  - API/history responses keep compatibility via `report.details.analysis_context_pack_overview` plus context-snapshot sanitization.
+- `render_analysis_context_pack_overview()`: no full pack payload, no `items`, and no `value` in public response.
+- `sanitize_context_snapshot_for_api()`: only strips top-level `analysis_context_pack_overview` and `market_phase_summary`; it does not do deep key-level redaction by itself, which is handled by `AnalysisContextPack.to_safe_dict()` / `redact_sensitive_mapping()`.
+- API/history responses keep compatibility via `report.details.analysis_context_pack_overview` plus context-snapshot sanitization.
 - Rollback mode: doc-only issues can be recovered by reverting P6 docs; runtime behavior changes still roll back by release version revert.
 - This phase does not modify `.env.example`, config registry, or Web setting keys; config migration is only introduced when later phases add new behavior toggles.
 - `docs/full-guide.md` and `docs/full-guide_EN.md` are both aligned for P6, so no separate one-off English strategy page is required.

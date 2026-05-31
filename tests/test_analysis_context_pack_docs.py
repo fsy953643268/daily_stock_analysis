@@ -377,7 +377,8 @@ def test_analysis_context_pack_doc_records_p6_migration_boundary_and_api_sensiti
     for token in (
         "P6 is a doc-and-acceptance closure phase",
         "Pre-release checks at this stage include",
-        "secret leakage gates",
+        "runtime visibility and sanitization gates",
+        "sanitize_context_snapshot_for_api()",
         "Rollback mode",
         "does not modify `.env.example`",
         "are both aligned for P6",
