@@ -61,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] AlphaSift API 抽出 `AlphaSiftService`，让 endpoint 只负责收参和路由，安装修复、状态、策略、选股、错误归一化与 DSA runtime bridge 收敛到服务层。
 - [改进] AlphaSift 选股结果对 Top N 候选补充 DSA 实时行情、股票名称、基本面上下文、新闻和辅助摘要，并在 Web 结果中展示 DSA 增强计数、摘要、新闻与提示。
 - [修复] AlphaSift 复用 DSA LLM 渠道时透传渠道额外请求头，避免自定义网关需要 header 时 LLM 重排降级。
+- [测试] 补充 AlphaSift LLM runtime bridge 回归测试：覆盖旧 LLM 配置注入、OpenAI 兼容 base URL 与 extra_headers 透传、`ALPHASIFT_ENABLED` 关闭时环境与调用路径隔离。
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->

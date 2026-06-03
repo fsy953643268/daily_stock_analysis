@@ -110,6 +110,7 @@ AlphaSift 侧已在 `ZhuLinsen/alphasift@1a0ed8c99b3615c0cb1076e6029827ffc6de234
   - 恢复旧渠道：保留历史 `LLM_<NAME>_API_KEYS/BASE_URL` 并重启配置生效，不需执行额外迁移脚本。
 - 兼容校验依据（运维核验）：
   - 官方兼容语义以 LiteLLM Provider 路径与模型别名约定为准（当前服务端依赖 `litellm` 的 provider/model 解析与频道配置语义）；AlphaSift 层不新增模型路由映射，不做 provider 模式迁移。
+  - 官方文档可按 `https://docs.litellm.ai/docs/providers` 与 `https://docs.litellm.ai/docs/providers/openai` 对照：provider/model 前缀、`api_base`、`api_key` 与 `extra_headers`。
   - 回退路径为“设置页关闭 AlphaSift 或保留 `ALPHASIFT_ENABLED=false`”，并保持原有 `LITELLM_*` 与 `LLM_*` 配置，触发失败时可先核对 `status`/`screen` 的 `diagnostics` 后执行服务重启。
   - 失败可见性：`status`/`screen` 接口返回明确错误码与 `message`，前端在设置页或选股页会将 `403/424/400/422` 等错误直接提示给用户，便于定位并回退到“关闭 AlphaSift + 保持原有 LLM 运行链路”。
 - 状态诊断：`/api/v1/alphasift/status` 对 AlphaSift 包或 `alphasift.dsa_adapter` 未安装仍保持 `200` + `available=false` 的兼容语义；如果导入过程、`get_status()` 调用或返回结构出现非预期异常，后端会记录 warning，并在响应中追加不含安装来源明文的 `diagnostics` 字段，便于从接口状态和服务端日志定位问题。

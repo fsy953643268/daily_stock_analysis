@@ -709,6 +709,131 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(completion_calls[0]["extra_headers"], {"x-tenant": "dsa"})
         self.assertIs(fake_litellm.completion, completion_impl)
 
+    def test_screen_bridges_legacy_openai_fields_into_alphasift_runtime_env(self) -> None:
+        config = Config(
+            alphasift_enabled=True,
+            alphasift_install_spec=DEFAULT_ALPHASIFT_TEST_SPEC,
+            litellm_model="openai/gpt-4o-mini",
+            openai_api_keys=["dsa-openai-key"],
+            openai_base_url="https://openai-compatible.example/v1",
+        )
+        captured: dict[str, object] = {}
+
+        def screen_impl(_strategy: str, **kwargs):
+            captured["env"] = {
+                "OPENAI_API_KEY": alphasift_service.os.environ.get("OPENAI_API_KEY"),
+                "OPENAI_API_KEYS": alphasift_service.os.environ.get("OPENAI_API_KEYS"),
+                "OPENAI_BASE_URL": alphasift_service.os.environ.get("OPENAI_BASE_URL"),
+                "LITELLM_MODEL": alphasift_service.os.environ.get("LITELLM_MODEL"),
+            }
+            captured["context"] = kwargs.get("context")
+            return {"candidates": []}
+
+        fake_module = _make_adapter_module(screen=MagicMock(side_effect=screen_impl))
+
+        with (
+            patch.dict(
+                alphasift_service.os.environ,
+                {
+                    "OPENAI_API_KEY": "outer-openai-key",
+                    "OPENAI_BASE_URL": "https://outer-openai.example/v1",
+                },
+                clear=False,
+            ),
+            patch("src.services.alphasift_service._import_alphasift", return_value=fake_module),
+        ):
+            payload = self._screen(config, market="cn", strategy="dual_low", max_results=5)
+            self.assertEqual(alphasift_service.os.environ.get("OPENAI_API_KEY"), "outer-openai-key")
+            self.assertEqual(alphasift_service.os.environ.get("OPENAI_BASE_URL"), "https://outer-openai.example/v1")
+
+        runtime_env = captured["env"]
+        self.assertIsInstance(runtime_env, dict)
+        self.assertEqual(runtime_env["OPENAI_API_KEY"], "dsa-openai-key")
+        self.assertEqual(runtime_env["OPENAI_API_KEYS"], "dsa-openai-key")
+        self.assertEqual(runtime_env["OPENAI_BASE_URL"], "https://openai-compatible.example/v1")
+        self.assertEqual(runtime_env["LITELLM_MODEL"], "openai/gpt-4o-mini")
+
+        context = captured["context"]
+        self.assertIsInstance(context, dict)
+        self.assertEqual(context["llm"]["channels"], [])
+        self.assertEqual(context["llm"]["model_list"], [])
+        self.assertEqual(payload["candidate_count"], 0)
+
+    def test_screen_injects_openai_compatible_model_headers_into_alphasift_litellm_calls(self) -> None:
+        config = Config(
+            alphasift_enabled=True,
+            alphasift_install_spec=DEFAULT_ALPHASIFT_TEST_SPEC,
+            litellm_model="openai/gpt-4o-mini",
+            litellm_fallback_models=["openai/gpt-4o-mini"],
+            llm_model_list=[
+                {
+                    "model_name": "openai/gpt-4o-mini",
+                    "litellm_params": {
+                        "model": "openai/gpt-4o-mini",
+                        "api_key": "dsa-openai-key",
+                        "api_base": "https://openai-compatible.example/v1",
+                        "extra_headers": {"x-tenant": "dsa"},
+                    },
+                },
+            ],
+        )
+        completion_calls: list[dict[str, object]] = []
+
+        def completion_impl(**kwargs):
+            completion_calls.append(kwargs)
+            return SimpleNamespace(choices=[])
+
+        fake_litellm = SimpleNamespace(completion=completion_impl)
+
+        def screen_impl(_strategy: str, **_kwargs):
+            fake_litellm.completion(
+                model="openai/gpt-4o-mini",
+                api_key="dsa-openai-key",
+                api_base="https://openai-compatible.example/v1",
+                messages=[{"role": "user", "content": "rank"}],
+            )
+            return {"candidates": []}
+
+        fake_module = _make_adapter_module(screen=MagicMock(side_effect=screen_impl))
+
+        with (
+            patch.dict(sys.modules, {"litellm": fake_litellm}, clear=False),
+            patch("src.services.alphasift_service._import_alphasift", return_value=fake_module),
+        ):
+            payload = self._screen(config, market="cn", strategy="dual_low", max_results=5)
+
+        self.assertEqual(payload["candidate_count"], 0)
+        self.assertEqual(completion_calls[0]["extra_headers"], {"x-tenant": "dsa"})
+        self.assertEqual(
+            completion_calls[0]["api_base"],
+            "https://openai-compatible.example/v1",
+        )
+        self.assertIs(fake_litellm.completion, completion_impl)
+
+    def test_screen_disabled_preserves_existing_llm_env_state(self) -> None:
+        config = self._config(enabled=False)
+        baseline_env = {
+            "OPENAI_API_KEY": "legacy-openai-key",
+            "OPENAI_BASE_URL": "https://outer.example.com/v1",
+            "LITELLM_MODEL": "openai/gpt-4o-mini",
+        }
+        original_env = {key: alphasift_service.os.environ.get(key) for key in baseline_env}
+
+        with (
+            patch.dict(alphasift_service.os.environ, baseline_env, clear=False),
+            patch("src.services.alphasift_service._build_alphasift_runtime_env") as runtime_env_mock,
+            self.assertRaises(HTTPException) as caught,
+        ):
+            self._screen(config, market="cn", strategy="dual_low", max_results=5)
+            for key, value in baseline_env.items():
+                self.assertEqual(alphasift_service.os.environ.get(key), value)
+
+        self.assertEqual(caught.exception.status_code, 403)
+        self.assertEqual(caught.exception.detail["error"], "alphasift_disabled")
+        runtime_env_mock.assert_not_called()
+        for key, value in baseline_env.items():
+            self.assertEqual(alphasift_service.os.environ.get(key), original_env[key])
+
     def test_screen_preserves_explicit_alphasift_snapshot_source_priority(self) -> None:
         config = self._config(enabled=True)
         captured: dict[str, object] = {}
