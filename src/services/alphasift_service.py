@@ -1328,6 +1328,13 @@ def _normalize_candidate(raw: Any, rank: int) -> Dict[str, Any]:
     if not isinstance(item, dict):
         item = {"code": str(item)}
     source = item.get("raw") if isinstance(item.get("raw"), dict) else item
+    dsa_context = item.get("dsa_context") or source.get("dsa_context") or {}
+    dsa_news = item.get("dsa_news") or source.get("dsa_news") or _extract_dsa_news_from_context(dsa_context)
+    dsa_analysis_summary = (
+        item.get("dsa_analysis_summary")
+        or source.get("dsa_analysis_summary")
+        or _extract_dsa_analysis_summary_from_context(dsa_context)
+    )
     return {
         "rank": item.get("rank") or source.get("rank") or rank,
         "code": item.get("code") or source.get("code") or item.get("symbol") or source.get("symbol") or item.get("stock_code") or source.get("stock_code") or "",
@@ -1353,13 +1360,49 @@ def _normalize_candidate(raw: Any, rank: int) -> Dict[str, Any]:
         "amount": _first_present(item, source, "amount"),
         "industry": item.get("industry") or source.get("industry") or "",
         "factor_scores": item.get("factor_scores") or source.get("factor_scores") or {},
-        "dsa_context": item.get("dsa_context") or source.get("dsa_context") or {},
-        "dsa_news": item.get("dsa_news") or source.get("dsa_news") or [],
-        "dsa_analysis_summary": item.get("dsa_analysis_summary") or source.get("dsa_analysis_summary") or "",
+        "dsa_context": dsa_context,
+        "dsa_news": dsa_news,
+        "dsa_analysis_summary": dsa_analysis_summary,
         "post_analysis_summaries": item.get("post_analysis_summaries") or source.get("post_analysis_summaries") or {},
         "post_analysis_tags": item.get("post_analysis_tags") or source.get("post_analysis_tags") or [],
         "raw": source,
     }
+
+
+def _extract_dsa_news_from_context(context: Any) -> List[Dict[str, Any]]:
+    if not isinstance(context, dict):
+        return []
+    news = context.get("news")
+    if isinstance(news, dict):
+        results = news.get("results")
+    elif isinstance(news, list):
+        results = news
+    else:
+        results = None
+    if not isinstance(results, list):
+        return []
+    return [item for item in results if isinstance(item, dict)]
+
+
+def _extract_dsa_analysis_summary_from_context(context: Any) -> str:
+    if not isinstance(context, dict):
+        return ""
+    for key in ("dsa_analysis_summary", "analysis_summary", "summary"):
+        value = context.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    news = context.get("news")
+    if isinstance(news, dict):
+        for key in ("analysis_summary", "summary"):
+            value = news.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    news_items = _extract_dsa_news_from_context(context)
+    if not news_items:
+        return ""
+    quote = context.get("quote") if isinstance(context.get("quote"), dict) else {}
+    fundamentals = context.get("fundamentals") if isinstance(context.get("fundamentals"), dict) else {}
+    return _build_dsa_analysis_summary({}, quote, fundamentals, {"results": news_items})
 
 
 def _first_present(primary: Dict[str, Any], source: Dict[str, Any], *keys: str) -> Any:
