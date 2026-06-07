@@ -487,7 +487,6 @@ def trigger_market_review(
         config,
         getattr(request, "report_language", None),
     )
-
     lock_token = _try_acquire_market_review_lock(runtime_config)
     if lock_token is None:
         raise api_error(409, "duplicate_market_review", "大盘复盘正在执行中，请稍后再试")
