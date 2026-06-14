@@ -1936,15 +1936,6 @@ class DsaEastMoneyHotspotProvider:
         self._min_request_interval = 0.25
 
     def _eastmoney_get(self, url: str, **kwargs: Any) -> Any:
-        with self._request_lock:
-            elapsed = time.monotonic() - self._last_request_ts
-            if elapsed < self._min_request_interval:
-                time.sleep(self._min_request_interval - elapsed)
-            response = self._session.get(url, **kwargs)
-            self._last_request_ts = time.monotonic()
-            return response
-
-    def _eastmoney_get(self, url: str, **kwargs: Any) -> Any:
         import requests
 
         retryable_errors = (
@@ -1956,8 +1947,13 @@ class DsaEastMoneyHotspotProvider:
         last_error: Optional[BaseException] = None
         for attempt in range(len(delays) + 1):
             try:
-                response = requests.get(url, **kwargs)
-                return response
+                with self._request_lock:
+                    elapsed = time.monotonic() - self._last_request_ts
+                    if elapsed < self._min_request_interval:
+                        time.sleep(self._min_request_interval - elapsed)
+                    response = self._session.get(url, **kwargs)
+                    self._last_request_ts = time.monotonic()
+                    return response
             except retryable_errors as exc:
                 last_error = exc
                 if attempt >= len(delays):

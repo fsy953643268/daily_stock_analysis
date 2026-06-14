@@ -583,15 +583,18 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
                 }
 
         get_mock = MagicMock(side_effect=[requests.exceptions.ConnectionError("Connection aborted"), FakeResponse()])
+        direct_get_mock = MagicMock(side_effect=AssertionError("bypassed EastMoney session"))
+        provider._session.get = get_mock
         with (
             patch("src.services.alphasift_service.time.sleep") as sleep_mock,
-            patch("requests.get", get_mock),
+            patch("requests.get", direct_get_mock),
         ):
             frame = provider._fetch_board_names(source_fs="m:90 t:3 f:!50")
 
         self.assertFalse(frame.empty)
         self.assertEqual(frame.iloc[0]["name"], "AI算力")
         self.assertEqual(get_mock.call_count, 2)
+        direct_get_mock.assert_not_called()
         sleep_mock.assert_called_once_with(0.3)
 
     def test_hotspots_respects_custom_alphasift_data_dir_for_cache_paths(self) -> None:

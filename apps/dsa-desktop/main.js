@@ -449,6 +449,20 @@ function normalizeBackupFileList(manifest) {
   return DESKTOP_UPDATE_RUNTIME_RELATIVE_FILES.slice();
 }
 
+function copyRuntimeStateEntry(source, target) {
+  const stats = fs.statSync(source);
+  if (stats.isDirectory()) {
+    ensureDirectory(target);
+    fs.readdirSync(source, { withFileTypes: true }).forEach((entry) => {
+      copyRuntimeStateEntry(path.join(source, entry.name), path.join(target, entry.name));
+    });
+    return;
+  }
+
+  ensureDirectory(path.dirname(target));
+  fs.copyFileSync(source, target);
+}
+
 function backupPackagedRuntimeState() {
   if (!isWindowsNsisInstalledApp()) {
     return;
@@ -464,8 +478,7 @@ function backupPackagedRuntimeState() {
     if (!fs.existsSync(absolutePath)) {
       return;
     }
-    ensureDirectory(path.dirname(backupPath));
-    fs.copyFileSync(absolutePath, backupPath);
+    copyRuntimeStateEntry(absolutePath, backupPath);
     backedUpFiles.push(relativePath);
   });
 
@@ -531,8 +544,7 @@ function restorePackagedRuntimeStateFromBackup() {
         if (!fs.existsSync(source)) {
           return;
         }
-        ensureDirectory(path.dirname(target));
-        fs.copyFileSync(source, target);
+        copyRuntimeStateEntry(source, target);
         result.restored.push(relativePath);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
